@@ -65,12 +65,14 @@ prompt = ChatPromptTemplate.from_messages(
 
 def retrieve(state: State):
     retrieved_docs = chroma.similarity_search(state["question"])
+    print("Documentos encontrados: \n" + str(retrieved_docs) + "\n\n")
     return {"context": retrieved_docs}
 
 def generate(state: State): 
     docs_content = format_docs(state["context"])
     messages = prompt.invoke({"input": state["question"], "context": docs_content})
     response = llm.invoke(messages)
+    print(("Respuesta generada"))
     return {"answer": response}
 
 graph_builder = StateGraph(State).add_sequence([retrieve, generate])
@@ -79,7 +81,8 @@ graph = graph_builder.compile()
 
 def adapter(message: str, history: list[list[str,str]]):
     result = graph.invoke({"question": message, "history": history})
-    return result["answer"].content  + "\nLos documentos originale son los siguientes:\n\t" "\n\t".join([doc.metadata["source"] for doc in result["context"]])
+    print(result["context"])
+    return result["answer"].content  + "\nLos documentos originale son los siguientes:\n\n\t" + "\n\t".join([doc.metadata["source"] for doc in result   ["context"]])
 
 from IPython.display import Image, display
 
@@ -92,29 +95,10 @@ Image(graph.get_graph().draw_mermaid_png())
 #          Answer:""")
 # ])
 
-# from langchain.globals import set_verbose
-# set_verbose(True)
-# chain = (
-#     {"context": retriever | format_docs, "input": RunnablePassthrough()}    
-#     | prompt 
-#     | llm 
-#     | StrOutputParser()
-# )   
 
-
-
-# def predict(message: str, history: list[list[str,str]]):
-
-#     # print(prompt.({"context": "contexto","input": message}))
-
-#     print(history)
-    
-#     return str(chain.invoke(message))
-
-
-interface = gr.Chatbot(label="Chat time!")
+interface = gr.Chatbot(label="Chat time!", type="tuples")
 with gr.Blocks() as demo:
-    chatbot = gr.ChatInterface(fn=adapter, chatbot=interface, title="RAG chatbot de prueba", examples=["Hola", "Dime algo sobre Franz Kafka", "Como se debería manejar una clase de 30 alumnos de primaria."])
+    chatbot = gr.ChatInterface(type="tuples", fn=adapter, chatbot=interface, title="RAG chatbot de prueba", examples=["Hola", "Dime algo sobre Franz Kafka", "Como se debería manejar una clase de 30 alumnos de primaria."])
 
 if __name__ == "__main__":
     demo.launch() 
