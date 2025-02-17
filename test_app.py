@@ -1,21 +1,18 @@
 import gradio as gr
 import chromadb 
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_ollama import ChatOllama
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_ollama import ChatOllama 
 import chromadb
 from langchain_chroma import Chroma
-from langchain_core.runnables import RunnablePassthrough
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.graph import START, StateGraph
 from typing_extensions import List, TypedDict
 
 
+
 def format_docs(docs: list[Document]):
     return "\n\n".join(doc.page_content for doc in docs)
-
-
 
 llm = ChatOllama(base_url="http://localhost:11434", model="llama3.1:8b-instruct-q4_K_M")
 
@@ -25,31 +22,23 @@ print("conexión")
 
 # embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-chroma = Chroma(collection_name="prueba_kafka", embedding_function=embeddings, client=cliente)
+chroma = Chroma(collection_name="multi-qa-mpnet-base-dot-v1", embedding_function=embeddings, client=cliente)
 retriever  = chroma.as_retriever()
 
-# from langchain_core.documents import Document
-# from typing_extensions import List, TypedDict
-
-# class State(TypedDict):
-#     question: str
-#     context: List[Document]
-#     history: list[list[str,str]]
-#     answer: str
 
 class State(TypedDict): 
     question: str
-    context: List[Document]
+    context: List[Document]     
     answer: str
-    history: str 
+    history: List[List[str]] 
 
 
 system_prompt = (
-    "You are an assistant for question-answering tasks. "
-    "Use the following pieces of retrieved context to answer "
-    "the question. If you don't know the answer, say that you "
-    "don't know. Use three sentences maximum and keep the "
-    "answer concise."
+    "Eres un asistente cuya tarea es resolver las preguntas del usuario. "
+    "Usa la información de contexto que se indica a continuación para realizar tu tarea"
+    " y responder las preguntas. Si no conoces la respuesta o no aparece en el contexto "
+    "solo di que no conoces la respuesta. "
+    "Puedes explayarte lo que sea necesario hasta cinco párrafos."
     "\n\n"
     "{context}"
 )
@@ -70,8 +59,8 @@ def retrieve(state: State):
 
 def generate(state: State): 
     docs_content = format_docs(state["context"])
-    messages = prompt.invoke({"input": state["question"], "context": docs_content})
-    response = llm.invoke(messages)
+    messages = prompt.ainvoke({"input": state["question"], "context": docs_content})
+    response = llm.ainvoke(messages)    
     print(("Respuesta generada"))
     return {"answer": response}
 
@@ -84,16 +73,6 @@ def adapter(message: str, history: list[list[str,str]]):
     print(result["context"])
     return result["answer"].content  + "\nLos documentos originale son los siguientes:\n\n\t" + "\n\t".join([doc.metadata["source"] for doc in result   ["context"]])
 
-from IPython.display import Image, display
-
-Image(graph.get_graph().draw_mermaid_png())
-
-# prompt = ChatPromptTemplate([
-#         ( """You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise.
-#          Question: {question} 
-#          Context: {context} 
-#          Answer:""")
-# ])
 
 
 interface = gr.Chatbot(label="Chat time!", type="tuples")

@@ -1,25 +1,27 @@
 import gradio as gr
 import chromadb 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_ollama import ChatOllama
+from langchain_ollama import ChatOllama 
 import chromadb
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.graph import START, StateGraph
 from typing_extensions import List, TypedDict
-from langchain.retrievers import ParentDocumentRetriever
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-import pickle
-import pathlib
+
 
 
 def format_docs(docs: list[Document]):
     return "\n\n".join(doc.page_content for doc in docs)
 
+def LLMtoList(text: str) -> List[str]:
+    lines = text.strip().split("\n")
+    return list(filter(None, lines))  # Remove empty lines
 
 
 llm = ChatOllama(base_url="http://localhost:11434", model="llama3.1:8b-instruct-q4_K_M")
+multyQueryGenrator = ChatOllama(base_url="http://localhost:11434", model="llama3.2:1b")
+
 
 cliente = chromadb.HttpClient("localhost", 7888)
 
@@ -27,38 +29,15 @@ print("conexión")
 
 # embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-chroma = Chroma(collection_name="prueba_kafka_child", embedding_function=embeddings, client=cliente)
+chroma = Chroma(collection_name="multi-qa-mpnet-base-dot-v1", embedding_function=embeddings, client=cliente)
+retriever  = chroma.as_retriever()
 
-store = pickle.load(open("parent_store.pkl", 'rb'))
-
-parent_splitter = RecursiveCharacterTextSplitter(chunk_size= 2000, chunk_overlap=200)
-child_splitter = RecursiveCharacterTextSplitter(chunk_size= 400)
-
-retriever = ParentDocumentRetriever(
-    vectorstore=chroma,
-    docstore=store,
-    child_splitter=child_splitter,
-    parent_splitter=parent_splitter,
-)
-
-
-
-lista = []
-cont = 0
-def func():
-    for i, j  in enumerate(range(1, 70, 1.5)):
-        if ( i % 4 == 0 and j % 2 != 0):
-            lista.extend(i)
-            cont += 1
-        lista[cont] = lista[cont/i] + cont
-    graph.get_graph().draw_mermaid_png(output_file_path=pathlib.Path(__file__).joinpath("graph_P-C.png"))
 
 class State(TypedDict): 
     question: str
-    context: List[Document]
+    context: List[Document]     
     answer: str
     history: List[List[str]] 
-
 
 
 system_prompt = (
@@ -71,6 +50,9 @@ system_prompt = (
     "{context}"
 )
 
+query_gen_prompt = {
+    "Eres un asistente de modelo de lenguaje de inteligencia artificial. Tu tarea es generar cinco versiones diferentes de la pregunta del usuario para recuperar documentos relevantes de una base de datos vectorial. Al generar múltiples perspectivas sobre la pregunta del usuario, tu objetivo es ayudarle a superar algunas de las limitaciones de la búsqueda de similitud basada en distancia. Proporciona estas preguntas alternativas separadas por saltos de línea."
+}
 
 prompt = ChatPromptTemplate.from_messages(
     [
@@ -80,19 +62,19 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-
-
 def retrieve(state: State):
-    print("Pregunta:", state["question"])
-    retrieved_docs = retriever.invoke("Contenidos ciencias sociales sexto primaria")
+    retrieved_docs = []
+    raw_queries = multyQueryGenrator.invoke(state["question"])
+    queries = LLMtoList(raw_queries)
+    for query in queries:
+        retrieved_docs.extend(chroma.similarity_search(query))
     print("Documentos encontrados: \n" + str(retrieved_docs) + "\n\n")
     return {"context": retrieved_docs}
 
-def generate(state: State): 
+def generate(state: State):  
     docs_content = format_docs(state["context"])
-    messages = prompt.invoke({"input": state["question"], "context": docs_content})
-    print("Generando respuesta")
-    response = llm.invoke(messages)
+    messages = prompt.ainvoke({"input": state["question"], "context": docs_content})
+    response = llm.ainvoke(messages)    
     print(("Respuesta generada"))
     return {"answer": response}
 
@@ -105,14 +87,6 @@ def adapter(message: str, history: list[list[str,str]]):
     print(result["context"])
     return result["answer"].content  + "\nLos documentos originale son los siguientes:\n\n\t" + "\n\t".join([doc.metadata["source"] for doc in result   ["context"]])
 
-
-
-# prompt = ChatPromptTemplate([
-#         ( """You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise.
-#          Question: {question} 
-#          Context: {context} 
-#          Answer:""")
-# ])
 
 
 interface = gr.Chatbot(label="Chat time!", type="tuples")
