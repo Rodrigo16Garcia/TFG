@@ -14,6 +14,8 @@ import pickle
 import pathlib
 
 
+
+
 def format_docs(docs: list[Document]):
     return "\n\n".join(doc.page_content for doc in docs)
 
@@ -27,12 +29,12 @@ print("conexión")
 
 # embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-chroma = Chroma(collection_name="prueba_kafka_child", embedding_function=embeddings, client=cliente)
+chroma = Chroma(collection_name="prueba_kafka_child_augmented", embedding_function=embeddings, client=cliente, collection_metadata={"hnsw:space": "l2", "hnsw:search_ef": 20})
 
 store = pickle.load(open("parent_store.pkl", 'rb'))
 
-parent_splitter = RecursiveCharacterTextSplitter(chunk_size= 2000, chunk_overlap=200)
-child_splitter = RecursiveCharacterTextSplitter(chunk_size= 400)
+parent_splitter = RecursiveCharacterTextSplitter(chunk_size= 10000)
+child_splitter = RecursiveCharacterTextSplitter(chunk_size= 1000)
 
 retriever = ParentDocumentRetriever(
     vectorstore=chroma,
@@ -40,8 +42,6 @@ retriever = ParentDocumentRetriever(
     child_splitter=child_splitter,
     parent_splitter=parent_splitter,
 )
-
-
 
 lista = []
 cont = 0

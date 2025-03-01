@@ -8,6 +8,7 @@ from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.graph import START, StateGraph
 from typing_extensions import List, TypedDict
+from time import time
 
 
 
@@ -22,7 +23,8 @@ print("conexión")
 
 # embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-chroma = Chroma(collection_name="multi-qa-mpnet-base-dot-v1", embedding_function=embeddings, client=cliente)
+chroma = Chroma(collection_name="all-MiniLM-L6-v2", embedding_function=embeddings, client=cliente, collection_metadata={"hnsw:space": "l2", "hnsw:search_ef": 20})
+
 retriever  = chroma.as_retriever()
 
 
@@ -59,8 +61,8 @@ def retrieve(state: State):
 
 def generate(state: State): 
     docs_content = format_docs(state["context"])
-    messages = prompt.ainvoke({"input": state["question"], "context": docs_content})
-    response = llm.ainvoke(messages)    
+    messages = prompt.invoke({"input": state["question"], "context": docs_content})
+    response = llm.invoke(messages)    
     print(("Respuesta generada"))
     return {"answer": response}
 
@@ -74,6 +76,23 @@ def adapter(message: str, history: list[list[str,str]]):
     return result["answer"].content  + "\nLos documentos originale son los siguientes:\n\n\t" + "\n\t".join([doc.metadata["source"] for doc in result   ["context"]])
 
 
+
+def invoke_coll(coll_name = "all-MiniLM-L6-v2", model = "all-MiniLM-L6-v2", distance = "l2", llm_model = "llama3.1:8b-instruct-q4_K_M"):
+    global llm
+    llm = ChatOllama(base_url="http://localhost:11434", model=llm_model)
+
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/"+model)
+
+    global chroma 
+    chroma = Chroma(collection_name=coll_name, client=cliente, collection_metadata={"hnsw:space": distance, "hnsw:search_ef": 20} , embedding_function=embeddings)
+    graph_builder = StateGraph(State).add_sequence([retrieve, generate])
+    graph_builder.add_edge(START, "retrieve")
+    global graph
+    graph = graph_builder.compile()
+
+
+def print_chroma():
+    print(chroma)
 
 interface = gr.Chatbot(label="Chat time!", type="tuples")
 with gr.Blocks() as demo:

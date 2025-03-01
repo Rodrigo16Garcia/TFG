@@ -1,6 +1,6 @@
 import gradio as gr
 import chromadb 
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_ollama import ChatOllama 
 import chromadb
 from langchain_chroma import Chroma
@@ -8,6 +8,9 @@ from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.graph import START, StateGraph
 from typing_extensions import List, TypedDict
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import CrossEncoderReranker
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 
 
 
@@ -29,12 +32,13 @@ print("conexión")
 
 # embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-chroma = Chroma(collection_name="multi-qa-mpnet-base-dot-v1", embedding_function=embeddings, client=cliente)
-retriever  = chroma.as_retriever()
+chroma = Chroma(collection_name="all-MiniLM-L6-v2", embedding_function=embeddings, client=cliente, collection_metadata={"hnsw:space": "l2", "hnsw:search_ef": 20})
+retriever  = chroma.as_retriever() 
 
 
 class State(TypedDict): 
     question: str
+    queries: List[str]
     context: List[Document]     
     answer: str
     history: List[List[str]] 
@@ -50,9 +54,10 @@ system_prompt = (
     "{context}"
 )
 
-query_gen_prompt = {
-    "Eres un asistente de modelo de lenguaje de inteligencia artificial. Tu tarea es generar cinco versiones diferentes de la pregunta del usuario para recuperar documentos relevantes de una base de datos vectorial. Al generar múltiples perspectivas sobre la pregunta del usuario, tu objetivo es ayudarle a superar algunas de las limitaciones de la búsqueda de similitud basada en distancia. Proporciona estas preguntas alternativas separadas por saltos de línea."
-}
+query_gen_prompt = PromptTemplate(input_variables=["question"],
+    template="Eres un asistente de modelo de lenguaje de inteligencia artificial. Tu tarea es generar cinco versiones diferentes de la pregunta del usuario para recuperar documentos relevantes de una base de datos vectorial. Al generar múltiples perspectivas sobre la pregunta del usuario, tu objetivo es ayudarle a superar algunas de las limitaciones de la búsqueda de similitud basada en distancia. Proporciona estas preguntas alternativas separadas solo por saltos de línea, sin nigún texto adicional. La salida debe seguir un formato similar al siguiente ejemplo:\n \"¿Cuál es la forma principal de garantizar que los estudiantes con discapacidad sea accesible a la educación?\n¿Qué tipo de tecnologías o recursos se utilizan para facilitar la inclusión de estudiantes con discapacidad?\n¿Cómo se implementan medidas para brindar acceso igualitario en el sistema educativo?\n¿Qué medidas específicas se han implementado en la comunidad educativa para promover la inclusión y el acceso igualitario a la educación?\n¿Cómo se han diseñado programas y políticas que beneficien a los estudiantes con discapacidad?\". Pregunta original: {question}")
+
+
 
 prompt = ChatPromptTemplate.from_messages(
     [
@@ -61,33 +66,46 @@ prompt = ChatPromptTemplate.from_messages(
         ("human", "{input}"),
     ]
 )
+    
+def gen_query(state: State):
+    prompt = query_gen_prompt.invoke(state["question"])
+    raw_queries = multyQueryGenrator.invoke(prompt)
+    queries = LLMtoList(raw_queries.content)
+    print(queries)
+    return {"queries": queries}
 
 def retrieve(state: State):
     retrieved_docs = []
-    raw_queries = multyQueryGenrator.invoke(state["question"])
-    queries = LLMtoList(raw_queries)
-    for query in queries:
-        retrieved_docs.extend(chroma.similarity_search(query))
+    for query in state["queries"]:
+        retrieved_docs.extend(retriever.invoke(query)) 
     print("Documentos encontrados: \n" + str(retrieved_docs) + "\n\n")
     return {"context": retrieved_docs}
 
-def generate(state: State):  
+def rerank(state: State): 
+    print("Tamaño contexto inicial: ", len(state["context"]))
+    model = HuggingFaceCrossEncoder(model_name="BAAI/bge-reranker-v2-m3")
+    compressor = CrossEncoderReranker(model=model, top_n=4)
+    final_context = compressor.compress_documents(state["context"], state["question"])
+    print("Documentos  finales: ", final_context)
+    return {"context": final_context}
+
+def generate(state: State):   
+    print("Tamaño contexto final: ", len(state["context"]))
     docs_content = format_docs(state["context"])
-    messages = prompt.ainvoke({"input": state["question"], "context": docs_content})
-    response = llm.ainvoke(messages)    
-    print(("Respuesta generada"))
+    print("Contexto final: ", docs_content) 
+    messages = prompt.invoke({"input": state["question"], "context": docs_content})
+    response = llm.invoke(messages)    
+    print(("Respuesta generada: ", response))
     return {"answer": response}
 
-graph_builder = StateGraph(State).add_sequence([retrieve, generate])
-graph_builder.add_edge(START, "retrieve")
+graph_builder = StateGraph(State).add_sequence([gen_query ,retrieve, rerank, generate])
+graph_builder.add_edge(START, "gen_query")
 graph = graph_builder.compile()
 
 def adapter(message: str, history: list[list[str,str]]):
     result = graph.invoke({"question": message, "history": history})
-    print(result["context"])
+    # print(result["context"])
     return result["answer"].content  + "\nLos documentos originale son los siguientes:\n\n\t" + "\n\t".join([doc.metadata["source"] for doc in result   ["context"]])
-
-
 
 interface = gr.Chatbot(label="Chat time!", type="tuples")
 with gr.Blocks() as demo:
