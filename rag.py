@@ -15,8 +15,6 @@ from langchain.retrievers import ParentDocumentRetriever
 import pickle
 
 
-
-
 def format_docs(docs: list[Document]):
     return "\n\n".join(doc.page_content for doc in docs)
 
@@ -91,22 +89,15 @@ class rag():
         graph_builder.add_edge("rerank", "generate")
         graph_builder.set_finish_point("generate")
         self.graph = graph_builder.compile()
-
-
-        self.graph_builder = StateGraph(State).add_sequence([self.gen_query ,self.retrieve, self.rerank, self.generate])
-        self.graph_builder.set_conditional_entry_point( (lambda state: "gen_query" if state["complex"] else "retrieve") )
-        self.graph_builder.add_edge(START, "gen_query")
-        self.graph_builder.add_edge("generate", END)
-        self.graph = self.graph_builder.compile()
         
 
-    def fork1(state: State) -> Literal["gen_query", "retrieve"]:
+    def fork1(self, state: State) -> Literal["gen_query", "retrieve"]:
         if state['complex']:
             return "gen_query"
         else:
             return "retrieve"
 
-    def fork2(state: State) -> Literal["rerank", "generate"]:
+    def fork2(self, state: State) -> Literal["rerank", "generate"]:
         if state['complex'] == True:
             return "rerank"
         else:
@@ -154,4 +145,10 @@ class rag():
         # print(result["context"])
         return result["answer"].content  + "\nLos documentos originale son los siguientes:\n\n\t" + "\n\t".join([doc.metadata["source"] for doc in result   ["context"]])
 
+    def something(self):
+        def update_complexity(complexity: bool):
+            print(self, complexity, self.complexity)
+            self.complexity = complexity
+        
+        return update_complexity
 
