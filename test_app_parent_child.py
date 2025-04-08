@@ -29,7 +29,8 @@ print("conexión")
 
 # embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-chroma = Chroma(collection_name="prueba_kafka_child_augmented", embedding_function=embeddings, client=cliente, collection_metadata={"hnsw:space": "l2", "hnsw:search_ef": 20})
+# chroma = Chroma(collection_name="prueba_kafka_child_augmented", embedding_function=embeddings, client=cliente, collection_metadata={"hnsw:space": "l2", "hnsw:search_ef": 20})
+chroma = Chroma(collection_name="prueba_kafka_child", embedding_function=embeddings, client=cliente, collection_metadata={"hnsw:space": "l2", "hnsw:search_ef": 20})
 
 store = pickle.load(open("parent_store.pkl", 'rb'))
 

@@ -21,9 +21,17 @@ import traceback
 
 
    # %%
+def add_docs(collection: Chroma, ampliar_db=False):
+    """Pide el directorio de fuentes que añadir a la colección que recibe y procesa todos los archivos válidos automáticamente
+    para añadirlos a la colección que recibe. 
+    También puede decidir si añadir resúmenes o no según la decisión previa del administrador.
 
-def add_docs(collection: Chroma, ampliar_db: bool):
-    
+    Argumentos: 
+        - collection: wrapped de Langchain para colecciones de Chroma
+        - ampliar_db: por defecto "False", evita que se creen resúmenes de los documentos cargados. "True" reactiva este comportamiento.
+    """
+
+    # Pide la dirección de los documentos al usuario. Si no es correcta, cierra el gestor
     try:
         path = input("Dirección del directorio con los archivos:")
         print("La dirección es "+ path)
@@ -34,6 +42,7 @@ def add_docs(collection: Chroma, ampliar_db: bool):
         print("No es direccion válida.\n", e.__str__)
         exit("Dirección introducida no es válida.")
 
+    # Carga los archivos si no son válidos o hay un error
     try:
         loader = PyPDFDirectoryLoader(path, mode="single", silent_errors=True)
         docs = loader.load()
@@ -53,17 +62,21 @@ def add_docs(collection: Chroma, ampliar_db: bool):
         traceback.print_exc()
         exit("Dirección introducida no es válida.")
 
-    # %%
+
+    # los fragmentadores usados sobre los documentos 
     parent_splitter = RecursiveCharacterTextSplitter(chunk_size= 10000)
     child_splitter = RecursiveCharacterTextSplitter(chunk_size= 1000)
 
-    # %%
+    #almacén de documentos originales
+    if ( bool(collection.get()["ids"]) ):
+        with open(f"{collection._collection_name}.pkl", 'rb') as inp:
+            store = pickle.load(inp)
+    else:
+        store = InMemoryStore()
 
-
-    with open("parent_store_final.pkl", 'rb') as inp:
-        store = pickle.load(inp)
-
-    # %%
+    # retriever Padre-Hijo de Langchain
+    # dados una base de datos vectorial y un almacenamiento clave-valor, organiza automáticamente los documentos padre y fragmentos hijo
+    # si se le dan fragmentadores para ambos tamaños, también puede hacer la fragmentación multinivel por si mismo
     retriever = ParentDocumentRetriever(
         vectorstore=collection,
         docstore=store,
@@ -71,26 +84,26 @@ def add_docs(collection: Chroma, ampliar_db: bool):
         parent_splitter=parent_splitter,
     )
 
-    # %%
     print("Introduciendo archivos")
-    retriever.add_documents(docs)
+    ids = [str(uuid.uuid4()) for doc in docs]
+    retriever.add_documents(documents=docs, ids=ids)
     print("Archivos introducidos")
 
-    # %%
-    with open("parent_store_final.pkl", 'wb') as outp:
+    # actualiza el almacen de documentos
+    with open(f"{collection._collection_name}.pkl", 'wb') as outp:
         pickle.dump(store, outp, pickle.HIGHEST_PROTOCOL)
 
-
-    # %%
+    
+    # carga un modelo pequeño y lo prepara para resumir documentos
     llm = ChatOllama(base_url="http://localhost:11434", model="llama3.2:1b")    
     prompt = ChatPromptTemplate.from_template("Resume el siguiente texto:\n\n{doc}")
 
 
-    # %%
+    # si está activado, genera resúmenes para cada fragmento padre y lo añade a la BD vectorial para ser indexado junto con los fragmentos hijos
+    # esto puede mejorar los resultados de la búsqueda, comprimiendo la información de un fragmento padre en vez de separándola, pero se tarda mucho
     if ampliar_db:
         print("Generando resúmenes")
-        keys = list(store.yield_keys())
-        parent_docs = store.mget(keys)
+        parent_docs = store.mget(ids)
         for doc in parent_docs:
             metadata = doc.metadata
             doc = doc.page_content
@@ -100,8 +113,9 @@ def add_docs(collection: Chroma, ampliar_db: bool):
         print("Resúmenes creados e introducidos")
 
     print("Los archivos han sido incorporados a la base de datos de forma existosa.")
-# %%
 
+    
+# %%
 def show_docs(collection: Chroma):
 # el primer campo obtiene todos los documentos originales sin repeticiones, útil
     # np.unique(np.array([ x["source"] for x in collection.get()["metadatas"]])), len(collection.get()["ids"]), collection.get()["data"]
@@ -116,7 +130,13 @@ def delete_coll(client, collection_name):
         client.delete_collection(collection_name)
         print("Colección eliminada correctamente")
     except Exception:
-        print("No se pudo eliminar la colección")
+        print("No se pudo eliminar la colección " + collection_name)
+        exit()
+    
+    try: 
+        os.remove(os.path.join(os.getcwd(), collection_name + ".pkl"))
+    except Exception:
+        pass
 
 # %%º
 
@@ -147,6 +167,7 @@ def main():
         client = chromadb.HttpClient(ip, int(puerto))
     except Exception:
         print("No se pudo conectar a la base de datos. Inicie el contenedor Docker de Chroma o introduzca el puerto correcto.")
+        exit()
     
     # %%
     colecciones = [ x.name for x in client.list_collections()]
@@ -192,6 +213,7 @@ def main():
             show_docs(coleccion)
         case _:
             print("Entrada incorrecta. Cerrando gestor de DB.")
+            exit()
 
 if __name__ == "__main__":
     main()
